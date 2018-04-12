@@ -33,52 +33,62 @@ import (
 var Polarion = PolarionReporter{}
 
 func init() {
-	flag.BoolVar(&Polarion.Run, "polarion", false, "Run Polarion reporter")
-	flag.StringVar(&Polarion.projectId, "polarion-project-id", "", "Set the Polarion project ID")
-	flag.StringVar(&Polarion.filename, "polarion-report-file", "polarion.xml", "Set the Polarion report file path")
+	flag.BoolVar(&Polarion.Run, "polarion-execution", false, "Run Polarion reporter")
+	flag.StringVar(&Polarion.projectId, "polarion-project-id", "", "Set Polarion project ID")
+	flag.StringVar(&Polarion.filename, "polarion-report-file", "polarion_results.xml", "Set Polarion report file path")
+	flag.StringVar(&Polarion.plannedIn, "polarion-custom-plannedin", "", "Set Polarion planned-in ID")
+    flag.StringVar(&Polarion.tier, "test-tier", "", "Set test tier number")
 }
 
-type PolarionTestCases struct {
-	XMLName   xml.Name           `xml:"testcases"`
-	TestCases []PolarionTestCase `xml:"testcase"`
-	ProjectID string             `xml:"project-id,attr"`
+type PolarionTestSuite struct {
+	XMLName      xml.Name           `xml:"testsuite"`
+	Properties   PolarionProperties `xml:"properties"`
+	TestCases    []PolarionTestCase `xml:"testcase"`
 }
 
 type PolarionTestCase struct {
-	Title                Title                `xml:"title"`
-	Description          Description          `xml:"description"`
-	TestCaseCustomFields TestCaseCustomFields `xml:"custom-fields"`
+	Name         String               `xml:"name,attr"`
 }
 
-type Title struct {
-	Content string `xml:",chardata"`
+type PolarionProperties struct {
+	Property []PolarionProperty `xml:"property"`
 }
 
-type Description struct {
-	Content string `xml:",chardata"`
-}
-
-type TestCaseCustomFields struct {
-	CustomFields []TestCaseCustomField `xml:"custom-field"`
-}
-
-type TestCaseCustomField struct {
-	Content string `xml:"content,attr"`
-	ID      string `xml:"id,attr"`
+type PolarionProperty struct {
+	Name   string             `xml:"name,attr"`
+	Value  string             `xml:"value,attr"`
 }
 
 type PolarionReporter struct {
-	suite         PolarionTestCases
+	suite         PolarionTestSuite
 	Run           bool
 	filename      string
-	projectId     string
-	testSuiteName string
+    testSuiteName string
 }
 
 func (reporter *PolarionReporter) SpecSuiteWillBegin(config config.GinkgoConfigType, summary *types.SuiteSummary) {
-	reporter.suite = PolarionTestCases{
+
+	reporter.suite = PolarionTestSuite{
+	    Properties: []PolarionProperties{},
 		TestCases: []PolarionTestCase{},
 	}
+
+	property_map := make(map[string]string)
+    property_map["polarion-project-id"] = reporter.projectId
+    property_map["polarion-testcase-lookup-method"] = "name"
+    property_map["polarion-custom-plannedin"] = "reporter.plannedIn"
+    property_map["polarion-testrun-id"] = reporter.plannedIn+"_"+reporter.tier
+    property_map["polarion-custom-isautomated"] = "True"
+
+	properties := PolarionProperties{}
+	for key, value := range property_map {
+	    properties.Property = append(properties.Property, PolarionProperty{
+            Name:   key,
+            Value:  value,
+	    })
+	}
+
+	reporter.suite.Properties = properties
 	reporter.testSuiteName = summary.SuiteDescription
 }
 
@@ -98,15 +108,8 @@ func (reporter *PolarionReporter) SpecDidComplete(specSummary *types.SpecSummary
 		strings.Join(specSummary.ComponentTexts[2:], " "),
 	)
 	testCase := PolarionTestCase{
-		Title:       Title{Content: testName},
-		Description: Description{Content: testName},
+		Name:   testName,
 	}
-	customFields := TestCaseCustomFields{}
-	customFields.CustomFields = append(customFields.CustomFields, TestCaseCustomField{
-		Content: "automated",
-		ID:      "caseautomation",
-	})
-	testCase.TestCaseCustomFields = customFields
 
 	reporter.suite.TestCases = append(reporter.suite.TestCases, testCase)
 }
@@ -116,7 +119,11 @@ func (reporter *PolarionReporter) SpecSuiteDidEnd(summary *types.SuiteSummary) {
 		fmt.Println("Can not create Polarion report without project ID")
 		return
 	}
-	reporter.suite.ProjectID = reporter.projectId
+	if reporter.plannedIn == "" {
+        fmt.Println("Can not create Polarion report without planned-in ID")
+        return
+    }
+
 	file, err := os.Create(reporter.filename)
 	if err != nil {
 		fmt.Printf("Failed to create Polarion report file: %s\n\t%s", reporter.filename, err.Error())
